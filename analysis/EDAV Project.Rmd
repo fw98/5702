@@ -1,0 +1,394 @@
+---
+title: "Leveraging NBA Spatial Data to Gather Basketball Insights"
+author: "Swapnav Deka, Junyang Jiang, Charley Levy, Alex Wan"
+date: "12/12/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r, include=FALSE}
+library(rjson)
+library(grid)
+library(jpeg)
+library(RCurl)
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(SpatialBall)
+library(stringi)
+library(ggmosaic)
+library(naniar)
+
+
+```
+<font size="6">Introduction </font>
+<p>Our team was brought together because of our shared interest in the NBA.  Over the last decade, analytics have become increasingly paramount in many sports.  To the mainstream, this revolution was popularized by the 2011 film ‘Moneyball’.  It depicted the Oakland Athletics and their General Manager Billy Beane’s (played by Brad Pitt) attempt to field a competitive team with a limited budget.  He used analytics that most teams were not using to find undervalued players.  This movie romanticized the benefit of using advanced analytics in conjunction with the more traditional statistics and scouting. To many, this was the first time that advanced analytics were associated with sports. While Moneyball centered on a baseball team, this was occurring across all sports, arguably none more than our beloved NBA. In 2009, a NYT article by Michael Lewis ‘The No-Stats All-Star’  https://www.nytimes.com/2009/02/15/magazine/15Battier-t.html examined the approach that the Houston Rocket’s General Manager, Daryl Morey, was implementing.  An M.I.T. Business school alumni, he realized that a player’s actual value was often not well encapsulated by traditional statistics.  By taking a more comprehensive approach to evaluating players, he discovered that he could benefit from signing players who were conventionally undervalued. If he valued players differently (and more accurately), he could take advantage of this via trades, drafting or on the free agent market.</p>
+<p>A major impetus to this approach in the NBA was the creation of SportsVU.  SportsVU is a set of cameras that are hung in the rafters of NBA arenas that collect data 25 times per second.  They collect data in the X,Y and Z dimension of both the ball and all the players on the court. It was first implemented in an NBA arena for the 2011-12 season.  2 years later, SportsVU was installed in all 30 NBA arenas.  The amount of data this created would have been unthinkable a mere decade earlier. Players were previously evaluated mainly on their ‘box score statistics’ like points, rebounds, assists.  SportsVU now enabled us to completely rethink the way we evaluated players.  This changed the landscape of the NBA in many ways.  Some players saw their values rise, while other players who were previously celebrated became maligned. The contours of NBA management also changed as MIT students were now given a seat at the table alongside ex-players.</p>
+<p>The first question we chose to tackle was how rest affects the shot charts of NBA players. The first way we examined this was looking at each team’s absolute rest. If a player’s team played the previous day, then all shots during the game the next day were classified as “0” days rest.  If a team played on Monday, was off Tuesday, and played Wednesday, then all shots taken by that team during their Wednesday game were classified as “1” days rest. Our categories for Absolute Rest were 0,1,2 and 3+ days. We used a catch-all category of 3+ for all games where the team had an Absolute Rest score of 3 or more.</p>
+<p>We then went a step further with our classification of rest. There are 2 teams in every game, so why not classify one teams rest in relation to the others. We theorized that a team’s ‘absolute rest’ might matter less than a team’s ‘relative rest’. For each game, we compared the rest of both teams. If both teams were equally rested, they each had a ‘relative rest’ classifier of 0. An example: if the Knicks and Lakers were playing on a Wednesday, we would consider when each team played their last game. If the Knicks last played on Monday, they would have an absolute rest of 1. If the Lakers last played on a Tuesday, they would have an absolute rest of 0. Relative Rest was calculated by comparing those 2 values. For that specific game, the Knicks would have a Relative Rest of +1, while the Lakers would have a Relative Rest of -1. Our categories for Relative Rest were -2+, -1,0,1, 2+. We used a catch-all category of ‘-2+’ and ‘2+’ for Relative Rest. If a team had Relative Rest of less than -2, we classified it as -2. We did the same for values of 2+, classifying them as 2. We did this in the interest of avoiding categories with very limited information.</p>
+<p>Aside from player rest, there are many other factors that can influence game outcomes along with the variety of other factors measured during in NBA games. Many of these differences occur at a team level, which makes sense because each franchise in the NBA operates as a separate entity with their own general managers, coaching staff, owners, etc. Each owner has his own standards, every general manager has his own style, and each coach has his philosophy. The composition of the actual roster, a mixture of veterans and youth, may also affect tendencies.</p>
+
+
+```{r}
+#load data
+dat <- season2017
+
+dat2 <- read.csv('2016-17_playerBoxScore.csv')
+
+
+#remove punctuation to allow for merging
+dat2$m_NAME <- stri_trans_general(gsub("[.]", "", dat2$playDispNm), "Latin-ASCII")
+
+
+#merge data
+df <- merge(dat,dat2,by.x = c('PLAYER_NAME', 'GAME_DATE'), by.y = c('m_NAME', 'gmDate'), all.x = TRUE)
+
+
+# #add advanced statistics
+# df$GameScore <- df$playPTS + 0.4 * df$playFGM - 0.7 * df$playFGA - 0.4*(df$playFTA - df$playFTM) + 0.7 * df$playORB + 0.3 * df$playDRB + df$playSTL + 0.7 * df$playAST + 0.7 * df$playBLK - 0.4 * df$playPF - df$playTO
+# 
+# df$TS <- df$playPTS / (2 * (df$playFGA + 0.44 * df$playFTA))
+# 
+# df$eFG <- (df$playFGM + 0.5 * df$play3PM) / df$playFGA
+# 
+
+#add relative rest, group rest vars by category
+df$relativeOff <- ifelse(abs(df$teamDayOff - df$opptDayOff) > 1, ifelse(df$teamDayOff - df$opptDayOff > 0, '2+', '-2-'), df$teamDayOff - df$opptDayOff)
+
+df$offType <- ifelse(df$teamDayOff > 2, '3+', df$teamDayOff)
+
+
+#set default order, remove rownames
+df <- df[order(df$TEAM_ID),]
+
+df <- df[order(df$GAME_ID),]
+
+rownames(df) <- NULL
+
+
+#clean up existing vars (order, type) 
+df$SHOT_ZONE_BASIC <- factor(df$SHOT_ZONE_BASIC, levels = c("Restricted Area", "In The Paint (Non-RA)", "Mid-Range", "Right Corner 3", "Above the Break 3", "Left Corner 3", "Backcourt"))
+
+df$SHOT_ZONE_RANGE <- factor(df$SHOT_ZONE_RANGE, levels = c("Less Than 8 ft.", "8-16 ft.", "16-24 ft.", "24+ ft.", "Back Court Shot"))
+
+df$relativeOff <- factor(df$relativeOff, levels = c("-2-", "-1", "0", "1", "2+"))
+                  
+df$PERIOD <- as.numeric(df$PERIOD)
+
+
+#list teams
+team <- unique(df['TEAM_NAME'])
+
+
+```
+
+
+<font size="6">Data Cleaning</font> <br>
+<font size="4">Data sources</font>
+<p>The entire SportsVU data set for the 2016-17 NBA season is publicly available. It is included in the SpatialBall package in R.  This dataset included information on all 202,029 shots taken during that season.  It provided the X-axis and Y-axis location for each shot, which enabled us to create shot charts.  It also included whether the shot was a make or miss, what type of shot it was (jump shot, layup, dunk, etc) in addition to many other identifiers like the player, time of shot, etc. This was the main source of our data.  We merged another publicly available dataset from Basketball-Reference.com. This dataset had more traditional statistics such as player points, rebounds, etc along with more specific information on player’s age and team schedules.</p>
+<font size="4">Data transformation</font>
+<p>We did several data transformations in order to facilitate our visualizations. First, we joined a separate dataset containing player BoxScores to the initial SpatialBall R dataset. In order to do so, we first removed the punctuations from player names in the box scores. This allowed us to merge the two datasets on the player name as well as the date of each game. From there, we added some new columns and advanced statistics from the existing box score. These include the Game Score number, the True Shooting Percentage, and the effective Field Goal percentage, which were all calculated by the included formulas in the cleaning script. Next, we added a column for relative rest, which is defined as the difference in a team’s number of rest days and the opponent’s number of rest days, and grouped the rest variables into categories. Then, we reordered the data such that it was in chronological order of the games played throughout the season using the GAME_ID variable, and because each game has two teams, the teams for each game were ordered alphabetically. Lastly, we set the factor levels for the SHOT_ZONE_BASIC and SHOT_ZONE_RANGE variables in increasing order of distance from the basket, and converted the PERIOD variable to numeric.</p>
+
+```{r}
+#Visualize NAs
+gg_miss_upset(df)
+
+#Remove NAs
+df <- na.omit(df)
+```
+
+<font size="4">Missing values</font>
+<p>We used the UpSetR package to visualize missing value pattens. We found that the same five variables contained missing values for some observations. We hypothesize that this information pertains to a dirty merge between the two datasets due to punctuation in names. Because this was not easy to fix, we omitted NAs for our analysis.</p>
+
+
+<font size="6">Results</font><br>
+<font size="4">Part 1 - Team Rest</font>
+
+
+```{r, include=FALSE}
+courtImg.URL <- "https://thedatagame.files.wordpress.com/2016/03/nba_court.jpg"
+court <- rasterGrob(readJPEG(getURLContent(courtImg.URL)),
+                    width=unit(1,"npc"), height=unit(1,"npc"))
+
+ggplot(df, aes(x=LOC_X, y=LOC_Y)) +
+  annotation_custom(court, -250, 250, -50, 420)+
+  geom_point(aes(colour = SHOT_ZONE_BASIC, shape=EVENT_TYPE, alpha=0.1, stroke=0))+
+  facet_wrap(~ offType) +
+  labs(title = 'Shot chart for 0,1,2,3+ days of rest for entire league')
+
+
+```
+
+
+```{r, fig.height=6, fig.width=12}
+dfwoBack <- filter(df, SHOT_ZONE_BASIC != "Backcourt")
+off <- c("0", "1", "2", "3+")
+for(i in off) {
+    p <- ggplot(dfwoBack[dfwoBack$offType == i,], aes(x=LOC_X, y=LOC_Y)) +
+      annotation_custom(court, -250, 250, -50, 420)+
+      geom_point(aes(colour = SHOT_ZONE_BASIC, shape=EVENT_TYPE, alpha=1/250, stroke=0)) +
+      ggtitle(paste("Shot Accuracy Charts with", i, "Days Off"))
+    print(p)
+}
+
+
+```
+<p>Our first visualization shows a shot chart for the entire 2016-17 season.  We faceted by Absolute Rest to show 4 different shot charts (0,1,2,3+ days of Absolute Rest).  In this visualization, we treated the data as spatial data. Including the X-Y location of each shot is valuable because the geography matters.  Shots from further out are generally harder than close up shots. Varying shot location distributions by absolute rest may indicate a player takes sub-optimal or different shots when they are tired as opposed to well rested.   These visualizations, while very visually appealing, were not that valuable.  There was a significant difference in the amount of shots taken in each group of Absolute Rest, so some shot charts appear more cluttered than others.  This doesn't reflect different shot selection but rather reflects  that more games were played on 2 days rest than on 0 days rest.  Although actual differences in shot selection may have existed, we were unable to decipher them in this visualization. </p>
+
+
+
+```{r}
+off <- c("0", "1", "2", "3+")
+for(i in off) {
+    shotS <- ddply(df[df$offType == i, ], .(SHOT_ZONE_BASIC), summarize, 
+                   SHOTS_ATTEMPTED = length(SHOT_MADE_FLAG),
+                   SHOTS_MADE = sum(as.numeric(as.character(SHOT_MADE_FLAG))),
+                   MLOC_X = mean(LOC_X),
+                   MLOC_Y = mean(LOC_Y))
+    shotS$SHOT_ACCURACY <- (shotS$SHOTS_MADE / shotS$SHOTS_ATTEMPTED)
+    shotS$SHOT_ACCURACY_LAB <- paste(as.character(round(100 * shotS$SHOT_ACCURACY, 1)), "%", sep="") 
+
+    p <- ggplot(shotS, aes(x=MLOC_X, y=MLOC_Y)) + 
+      annotation_custom(court, -250, 250, -52, 418) +
+      geom_point(aes(colour = SHOT_ZONE_BASIC, size = SHOT_ACCURACY, alpha = 0.8), size = 8) +
+      geom_text(aes(colour = SHOT_ZONE_BASIC, label = SHOT_ACCURACY_LAB), vjust = -1.2, size = 3) +
+      ggtitle(paste("Shot Accuracy Charts with", i, "Days Off"))
+    print(p)
+}
+```
+
+<p>Our next visualization continued to explore the way Absolute Rest affect’s a player’s shot.  For this, we used the variable Shot Zone that geographically breaks the court up into 7 regions (Backcourt, left corner 3, midrange, etc).  We then used the make/miss variable to show the overall shooting percentage within each shooting zone.  Again, we faceted by Absolute Rest. Despite removing the spatial data(X-Y coordinates), we still chose to show the shooting percentage of each category(the 7 regions on a court) in the corresponding area on the court.  Our hypothesis was that shooting percentages would rise with more rest.  For this visualization, our hypothesis did not bear out. There was no discernable trend in shooting percentages by shooing zone when faceted by Absolute Days rest.</p>
+
+```{r, include=FALSE}
+shotS <- ddply(df, .(SHOT_ZONE_BASIC, offType), summarize, 
+                   SHOTS_ATTEMPTED = length(SHOT_MADE_FLAG),
+                   SHOTS_MADE = sum(as.numeric(as.character(SHOT_MADE_FLAG))),
+                   MLOC_X = mean(LOC_X),
+                   MLOC_Y = mean(LOC_Y))
+shotS$SHOT_ACCURACY <- (shotS$SHOTS_MADE / shotS$SHOTS_ATTEMPTED)
+shotS$SHOT_ACCURACY_LAB <- paste(as.character(round(100 * shotS$SHOT_ACCURACY, 1)), "%", sep="") 
+
+ggplot(shotS, aes(x=MLOC_X, y=MLOC_Y)) + 
+      annotation_custom(court, -250, 250, -52, 418) +
+      geom_point(aes(colour = SHOT_ZONE_BASIC, size = SHOT_ACCURACY, alpha = 0.8), size = 8) +
+    
+      geom_text(aes(colour = SHOT_ZONE_BASIC, label = SHOT_ACCURACY_LAB), vjust = -1.2, size = 3) +
+      facet_wrap(~ offType)
+```
+
+```{r}
+ggplot(shotS, aes(x=offType, y=SHOT_ACCURACY_LAB, group=SHOT_ZONE_BASIC)) + 
+  geom_line(aes(color=SHOT_ZONE_BASIC)) +
+  geom_point(aes(color=SHOT_ZONE_BASIC)) +
+  labs(title = 'Effect of Rest on Shot Location')
+```
+
+<p>The next visualization looks at the exact same data as the previous one, but in a different format.  We removed any spatial depiction of our data and chose to display is as multi-variate categorical data on a Parallel Coordinate Plot.  Just as in the previous visualization, we showed how shooting percentage by shot zone varied with Absolute Rest.  We found the Parallel Coordinate Plot to be the clearest way to show this information. Although shooting percentage trended upward in a few shooting areas as absolute rest increased, no real trend emerged.</p>
+
+
+```{r}
+off <- c("-2-", "-1", "0", "1", "2+")
+for(i in off) {
+    shotS <- ddply(df[df$relativeOff == i, ], .(SHOT_ZONE_BASIC), summarize, 
+                   SHOTS_ATTEMPTED = length(SHOT_MADE_FLAG),
+                   SHOTS_MADE = sum(as.numeric(as.character(SHOT_MADE_FLAG))),
+                   MLOC_X = mean(LOC_X),
+                   MLOC_Y = mean(LOC_Y))
+    shotS$SHOT_ACCURACY <- (shotS$SHOTS_MADE / shotS$SHOTS_ATTEMPTED)
+    shotS$SHOT_ACCURACY_LAB <- paste(as.character(round(100 * shotS$SHOT_ACCURACY, 1)), "%", sep="") 
+
+    p <- ggplot(shotS, aes(x=MLOC_X, y=MLOC_Y)) + 
+      annotation_custom(court, -250, 250, -52, 418) +
+      geom_point(aes(colour = SHOT_ZONE_BASIC, size = SHOT_ACCURACY, alpha = 0.8), size = 8) +
+      geom_text(aes(colour = SHOT_ZONE_BASIC, label = SHOT_ACCURACY_LAB), vjust = -1.2, size = 3) +
+      ggtitle(paste("Shot Accuracy Charts with", i, "Relative Days Off"))
+    print(p)
+}
+```
+
+<p>Next, we moved onto Relative Rest. Similar to our visualization for Absolute Rest, we plotted the shot accuracy for each of the 7 shot areas faceted by Relative Rest. Although not consistent among all the shot zones, there does appear to be an upward trend in shooting percentages as Relative Rest increases.</p>
+
+
+```{r, include=FALSE}
+ggplot(df, aes(x=SHOT_ZONE_BASIC, fill=EVENT_TYPE)) + 
+  geom_bar(aes(y = (..count..))) +
+  facet_wrap(~ offType) +
+  coord_flip()
+
+
+```
+
+
+
+```{r}
+x <- df[c("GAME_ID", "teamRslt", "relativeOff")]
+x <- x[!duplicated(x),]
+
+winProp=data.frame(prop.table(table(x$relativeOff,x$teamRslt),1))
+winProp$Var1 = factor(winProp$Var1, levels=c('-2-','-1','0','1','2+'))
+ggplot(winProp,aes(Var1))+
+  geom_bar(aes(fill=Var2,y=Freq), position=position_stack(), stat = "identity")+
+  coord_flip()+
+  labs(y = "Game Result",
+       x = "Relative Day Off",
+       title = 'Effect of Rest on Game Result')
+
+
+```
+
+<p>We continued to look at Relative Rest.  We used a horizontal stacked bar chart to show the proportion of wins/losses based on Relative Rest.  We hypothesized that a team who is more well rested compared to their opponent should have an advantage.  This proved true in our visualization, as winning percentage increased as a team was more well rested relative to their opponent.</p>
+
+
+```{r}
+df %>%
+  ggplot(aes(relativeOff)) + 
+  geom_bar(aes(fill = ACTION_TYPE), position = 'fill') +
+  ggtitle("Shot Type by relative days rest") + theme(legend.title = element_text(size = 4), 
+               legend.text = element_text(size = 4))
+
+
+```
+
+<p>Next, we created a visualization to show how the frequency of each type of shot varied by Relative Rest.  Each shot was categorized into 52 different categories such as ‘cutting layup shot’, ‘tip dunk shot’, etc.  We chose to create a vertical stacked bar chart for this visualization. This was a case in which too much data can be overwhelming.  Because there were so many categories, it was hard to decipher a difference.</p>
+
+```{r}
+df %>%
+  ggplot(aes(relativeOff)) + 
+  geom_bar(aes(fill = SHOT_ZONE_BASIC), position = 'fill') +
+  ggtitle("Relative Frequency of shots in each zone by relative days of rest")
+
+
+```
+
+<p>Next, we created another vertical stacked bar chart to show how the frequency of each shot area varies by Relative Rest. Although this visualization is very clear, it is hard to decipher if there are any differences.  It is possible a parallel coordinate plot may have been clearer in this situation.</p>
+
+```{r}
+df %>%
+  ggplot(aes(relativeOff)) + 
+  geom_bar(aes(fill = SHOT_ZONE_BASIC), position = 'fill') +
+  ggtitle("Relative Frequency of shots in each range by relative days of rest")
+
+
+```
+
+<p>We made another vertical stacked bar chart to show how the frequency of each shot range (less than 8ft, 8-16ft, 16-24ft, etc) varies by Relative Rest.  Again, it was hard to decipher a difference among frequency of shot ranges by Relative Rest.</p>
+
+
+<font size="4">Part 2 - Team Philosophy and Composition</font>
+
+<p>The first indicator examined on the team-level is the effect of experience and age. The five oldest teams in the NBA during the 2016-2017 season were the Cleveland Cavaliers, Los Angeles Clippers, San Antonio Spurs, Dallas Mavericks, and Atlanta Hawks. Age in the NBA doesn’t necessarily correlate with specific physical or statistical factors; however, it can be hypothesized that game tendencies are affected by age due to experience as well as physical fatigue. The five youngest teams in that same time span were the Philadelphia 76ers, Portland Trailblazers, Toronto Raptors, Phoenix Suns, and Denver Nuggets. Right off the bat, it is not obvious that age and experience might be a clear indicator of team performance. Both the oldest and youngest teams have a mixture of successful and poor performing teams. However, if we dig deeper, we can discover some interesting things.</p>
+
+```{r}
+df %>% 
+  filter(df$TEAM_NAME %in% c('Cle', 'Lac', 'Sas', 'Dal', 'Atl') & df$PERIOD < 5) %>%
+  ggplot(aes(x=SHOT_ZONE_RANGE, fill=EVENT_TYPE)) + 
+  geom_bar(aes(y = (..count..))) +
+  labs(title = 'Shot Types - Old Teams') +
+  facet_grid(TEAM_NAME~ PERIOD) +
+  coord_flip()
+
+df %>% 
+  filter(df$TEAM_NAME %in% c('Phi', 'Por', 'Tor', 'Pho', 'Den') & df$PERIOD < 5) %>%
+  ggplot(aes(x=SHOT_ZONE_RANGE, fill=EVENT_TYPE)) + 
+  geom_bar(aes(y = (..count..))) +
+  labs(title = 'Shot Types - Young Teams') +
+  facet_grid(TEAM_NAME~ PERIOD) +
+  coord_flip()
+
+# for (team in c('Cle', 'Lac', 'Sas', 'Dal', 'Atl')){
+# plot = df %>% 
+#   filter(df$TEAM_NAME == team & df$PERIOD < 5) %>%
+#   ggplot(aes(x=SHOT_ZONE_RANGE, fill=EVENT_TYPE)) + 
+#   geom_bar(aes(y = (..count..))) +
+#   labs(title = team) +
+#   facet_wrap(~ PERIOD) +
+#   coord_flip()
+# print(plot)
+#   }
+# 
+# 
+# for (team in c('Phi', 'Por', 'Tor', 'Pho', 'Den')){
+# plot = df %>% 
+#   filter(df$TEAM_NAME == team & df$PERIOD < 5) %>%
+#   ggplot(aes(x=SHOT_ZONE_RANGE, fill=EVENT_TYPE)) + 
+#   geom_bar(aes(y = (..count..))) +
+#   labs(title = team) +
+#   facet_wrap(~ PERIOD) +
+#   coord_flip()
+# print(plot)
+# }
+
+
+```
+
+<p>Analyzing the older teams first shows clear trends that appear across the board among all five teams. The mid-range shot, as the casual basketball fan may expect, is a dying art. Both three pointers and inside shots outnumber midrange shots among all teams. To examine another factor in determining efficiency, the data is faceted by quarter of play to investigate the fatigue factor of age. Cleveland’s shot graphs indicate that over time, the team starts to take more three pointers and less inside shots, which could be due to fatigue due to age. The Clippers and Mavericks exhibit this same behavior, with the Mavericks even shooting more threes in every quarter. Atlanta and San Antonio shoot a relatively smaller number of three point shots compared to the other three teams, but the real comparison will be seeing how these numbers relate to the younger teams.</p>
+
+<p>The least extreme of the young teams seems to be the Philadelphia 76ers. By this, we mean to say that the Sixers exhibit a chart that is similar to the Hawks and Spurs, although still showing the tendency to shoot more shots inside the paint. The other four teams clearly exhibit a trend of shooting a relatively much higher proportion of shots inside than outside compared to old teams. When the time is factored in, these teams don’t show the same change in behavior of settling for more outside shots down the stretch. Although not necessarily solely indicative, these behaviors do make sense for young teams, which have players who are more athletic and energetic, therefore more capable of driving the lane in the late stretches of games, while older teams may be more tired and fatigued, forcing them into longer shots because of an inability to beat opposition of the dribble as effectively.</p>
+
+
+
+```{r}
+ggplot(df, aes(x=SHOT_ZONE_RANGE, fill=EVENT_TYPE)) + 
+  geom_bar(aes(y = (..count..))) +
+  facet_wrap(~ TEAM_NAME) +
+  coord_flip() +
+  theme(axis.text.x = element_text(angle=90)) +
+  labs(title = 'Shot Types by Team')
+
+
+```
+
+<p>To gather a better idea of tendencies in the league, we can examine shot tendencies for every team in the league. This graphic gleans lots of useful information. Perusing the information displayed, you can rather easily make assessments of team success and coaching philosophies. For example, the Brooklyn Nets seem to take a lot of inside shots and a large proportion of them. They also do not seem to make up for this by hitting a large number of other shots successfully. Sure enough, looking up the team record for the Nets shows that they were one of the worst teams in the league that year. Contrarily, Cleveland seems to take a large number of three pointers, and hit them at a high rate. Cleveland was indeed a successful team this season. However, to more easily see differences, it might help to stack the charts and standardize the bars.</p>
+
+```{r}
+df %>%
+  ggplot(aes(TEAM_NAME)) + 
+  geom_bar(aes(fill = SHOT_ZONE_RANGE), position = 'fill') +
+  coord_flip() +
+  labs(title='Shot Distribution by Team')
+
+
+```
+
+<p>This graphic doesn’t show shot misses and makes, so it is less of a tool for team performance and more of an indicator for coaching philosophy. One of the things that pops out right away is the extremely large blue bar for a team. It is much longer than other teams, and likewise their two successive mid-range bars are miniscule. Although this might not mean much to a casual viewer, basketball fans could probably guess that this team sounds like the Houston Rockets. Sure enough, this is the case. The coaching philosophy for the Rockets is well-known for completely disregarding the mid-range game and emphasizing there “three and D” philosophy. This is reflected in their shot tendencies, as the team takes by far the larges number of threes in the NBA.</p>
+
+```{r}
+df$playoff <- as.factor(ifelse(df$teamAbbr %in% c("BKN", "CHA", "DAL", "DEN", "DET", "LAL", "MIA", "MIN", "NO", "NY", "ORL", "PHI", "PHO", "SAC"), 'Lottery', 'Playoffs'))
+
+
+df %>% ggplot() + 
+  geom_mosaic(
+    aes(x=product(SHOT_ZONE_RANGE, playoff), # cut from right to left 
+        fill=playoff),
+    na.rm=TRUE) +
+  labs(title='Shot Location by Team Success')
+
+
+df %>% ggplot() +
+  geom_mosaic(
+    aes(x=product(SHOT_ZONE_RANGE, offType), # cut from right to left 
+        fill=offType),
+    na.rm=TRUE) +
+  labs(title='Shot Location by Days Rest')
+
+
+```
+
+<p>A mosaic plot can be a useful tool see relationships among multivariate categorical data. To see if shot tendencies correlate with team success, we can divide on playoff status. As we discussed in the rest section, we didn’t seem to find visible differences in shot tendencies for days rest. However, when we divide based on whether a team was successful or not (playoff status), we do see a slight trend. The playoff caliber teams take a higher rate of more point-efficient shots. That is to say, they seem to take less mid range shots, and replace the production with more three point shots and inside shots. This is interesting, but not surprising as it confirms some of our observations based on the team data.</p>
+<p>To follow up on earlier analysis, using a mosaic plot also gleans some interesting information about days rest. Although this was not as clearly visible on the bar graphs, we see that there are slight variations in shot tendencies depending on the number of days rest. Teams seem to take more inside shots when they have had more rest. This again corroborates some earlier insights: it is possible that on short rest, teams are more fatigued and do not have as much energy to drive to the paint and take inside shots throughout the course of the game. As a result, teams exhibit a tendency to settle for longer range shots on short rest.</p>
+
+<font size="6">Interactive Component</font>
+<p>Please see the Github Repository for the interactive component.
+</p>
+
+
+<font size="6">Conclusion</font>
+
+<p>For the 1st part of our analysis, we looked at how rest (both absolute and relative) affected player’s shots.  To do this, we looked at every team’s schedule, essentially ‘team’ rest.  In actuality, ‘player’ rest may have been more informative than ‘team’ rest.  If a player didn’t play in his previous team’s game (bench players often play sparingly), he is actually well rested.  His ‘team’ rest wouldn’t reflect this, but his ‘player’ rest would.  We considered trying to classify ‘player’ rest but ultimately found it too difficult.  Instead, we used ‘team’ rest as a substitute for ‘player’ rest.
+
+Additionally, it is possible that we could have chosen a better visualization format for our multi-variate categorical data.  In some instances, our data may have been better visualized with parallel coordinate plots rather than stacked bar charts.
+
+Additionally, when merging our 2 data sets, some player’s names didn’t merge properly (players with a ‘-‘ in their name).  More thorough data merging would have addressed that.</p>

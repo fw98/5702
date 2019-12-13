@@ -383,7 +383,7 @@ df %>% ggplot() +
 <font size="6">Interactive Component</font>
 <p>https://nbviewer.jupyter.org/github/fw98/5702-Final-Project/blob/master/analysis/interactive/5702%20Interactive.ipynb</p>
 
-<p>Please see the Github Repository for the notebook and html versions of the interactive component.
+<p>Please see the Github Repository (linked at bottom) for the notebook and html versions of the interactive component.
 </p>
 
 
@@ -394,3 +394,7 @@ df %>% ggplot() +
 Additionally, it is possible that we could have chosen a better visualization format for our multi-variate categorical data.  In some instances, our data may have been better visualized with parallel coordinate plots rather than stacked bar charts.
 
 Additionally, when merging our 2 data sets, some player’s names didn’t merge properly (players with a ‘-‘ in their name).  More thorough data merging would have addressed that.</p>
+
+
+<font size="6">Github Repository</font>
+<p>https://github.com/fw98/5702-Final-Project</p>

@@ -381,7 +381,9 @@ df %>% ggplot() +
 <p>To follow up on earlier analysis, using a mosaic plot also gleans some interesting information about days rest. Although this was not as clearly visible on the bar graphs, we see that there are slight variations in shot tendencies depending on the number of days rest. Teams seem to take more inside shots when they have had more rest. This again corroborates some earlier insights: it is possible that on short rest, teams are more fatigued and do not have as much energy to drive to the paint and take inside shots throughout the course of the game. As a result, teams exhibit a tendency to settle for longer range shots on short rest.</p>
 
 <font size="6">Interactive Component</font>
-<p>Please see the Github Repository for the interactive component.
+<p>https://nbviewer.jupyter.org/github/fw98/5702-Final-Project/blob/master/analysis/interactive/5702%20Interactive.ipynb</p>
+
+<p>Please see the Github Repository for the notebook and html versions of the interactive component.
 </p>
 
 

@@ -1,4 +1,4 @@
-# 5702
+# Leveraging NBA Spatial Data to Gather Basketball Insights
 Welcome to our final project.
 
 /analysis contains our notebooks, code, scripts, etc.
